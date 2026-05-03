@@ -14,3 +14,32 @@ rtk bash -lc 'source .venv/bin/activate && ruff check src tests && ruff format -
 ```
 
 Shell commands use the **`rtk`** prefix per [`.cursor/rules/stack-runtime.md`](.cursor/rules/stack-runtime.md).
+
+## Infra (Redis + TimescaleDB)
+
+Requires [Docker](https://docs.docker.com/get-docker/). First-time DB init runs `deploy/sql/init-timescale.sql` (hypertable `vehicle_counts`, table `daily_briefs`, dev-only read-only role `city_pulse_reader`).
+
+```bash
+rtk docker compose up -d redis timescaledb
+rtk docker compose ps
+```
+
+Stop and remove containers (keep DB volume):
+
+```bash
+rtk docker compose down
+```
+
+Reset DB (**destroys** volume):
+
+```bash
+rtk docker compose down -v
+```
+
+Smoke-check tables:
+
+```bash
+rtk bash -lc 'docker compose exec timescaledb psql -U city_pulse -d city_pulse -c "\\dt"'
+```
+
+Copy `.env.example` → `.env` so app defaults match Compose (`DATABASE_URL` uses host port **5433**).

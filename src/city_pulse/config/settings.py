@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     )
 
     database_url: str = Field(
-        default="postgresql://city_pulse:city_pulse@localhost:5432/city_pulse",
-        description="Timescale/Postgres connection URL",
+        default="postgresql://city_pulse:city_pulse@localhost:5433/city_pulse",
+        description="Timescale URL (Compose DB mapped to localhost:5433)",
     )
     redis_url: str = Field(
         default="redis://localhost:6379/0",
