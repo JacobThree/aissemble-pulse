@@ -76,6 +76,28 @@ rtk bash -lc 'source .venv/bin/activate && inference deploy init --target docker
 
 More checks: [`docs/mlserver-smoke.md`](docs/mlserver-smoke.md). **`YOLO_ENDPOINT`** defaults to `http://localhost:8080` (REST/OIP).
 
+## Sumy (MLServer)
+
+Text summarization via **`aissemble-inference-sumy`** (`models/sumy/model-settings.json`). Compose maps container HTTP **8080** → host **8090** so YOLO can keep **8080**.
+
+```bash
+rtk docker compose up -d sumy
+rtk bash -lc 'curl -sf http://127.0.0.1:8090/v2/health/ready && echo OK'
+```
+
+Details: [`deploy/sumy/README.md`](deploy/sumy/README.md). Set **`SUMY_ENDPOINT=http://localhost:8090`** for the daily brief job.
+
+## Daily brief job
+
+Rolls up **`vehicle_counts`** into hourly buckets per camera for a **UTC calendar day**, builds a draft capsule, POSTs to Sumy infer, and **`UPSERT`** into **`daily_briefs`** (same `day` overwrites — safe to rerun). Default **`--day`**: **yesterday UTC**.
+
+```bash
+rtk docker compose up -d timescaledb sumy
+rtk bash -lc 'source .venv/bin/activate && city-pulse-daily-brief'
+# Pin the window explicitly:
+rtk bash -lc 'source .venv/bin/activate && city-pulse-daily-brief --day 2026-05-01'
+```
+
 ## Vision worker (Redis → YOLO → Timescale)
 
 Consumes **`INGEST_QUEUE_KEY`** with [`FramePayload`](src/city_pulse/ingest/models.py) JSON (`camera_key`, `captured_at`, `frame_b64`), POSTs the frame to MLServer OIP infer, counts allowed labels above **`VISION_MIN_CONFIDENCE`**, and inserts into **`vehicle_counts`**. Needs Redis, TimescaleDB, and the **`yolo`** service (or any compatible OIP endpoint).

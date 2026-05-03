@@ -35,3 +35,25 @@ rtk bash -lc 'source .venv/bin/activate && inference deploy init --target docker
 ```
 
 If the CLI errors mid-run, files may still appear under `deploy/docker/`; fix paths and image name (`city-pulse-yolo:local`) in generated compose snippets before commit.
+
+---
+
+## Sumy (host 8090)
+
+Separate Compose service **`sumy`** — HTTP on **`http://127.0.0.1:8090`**, model name **`sumy`**.
+
+### Ready
+
+```bash
+rtk bash -lc "curl -sf http://127.0.0.1:8090/v2/health/ready >/dev/null && echo OK"
+```
+
+### Infer (plain text)
+
+```bash
+rtk bash -lc 'curl -s -X POST http://127.0.0.1:8090/v2/models/sumy/infer \
+  -H "Content-Type: application/json" \
+  -d "{\"inputs\":[{\"name\":\"text\",\"shape\":[1],\"datatype\":\"BYTES\",\"data\":[\"First sentence. Second sentence. Third sentence. Fourth.\"]}]}"'
+```
+
+First start may download NLTK tokenizer data inside the container.

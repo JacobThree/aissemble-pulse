@@ -105,6 +105,28 @@ class Settings(BaseSettings):
         description="Max psycopg pool connections for vision worker",
     )
 
+    sumy_endpoint: str = Field(
+        default="http://localhost:8090",
+        description=(
+            "MLServer HTTP base for Sumy (Compose maps container 8080 → host 8090)"
+        ),
+    )
+    sumy_model_name: str = Field(
+        default="sumy",
+        description="MLServer model name for /v2/models/{name}/infer",
+    )
+    sumy_http_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        description="HTTP timeout for Sumy infer",
+    )
+    daily_brief_db_pool_max: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Max psycopg pool connections for daily brief job",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

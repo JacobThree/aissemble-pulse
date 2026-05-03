@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 city-pulse-ingest = "city_pulse.ingest.cli:main"
 city-pulse-vision-worker = "city_pulse.workers.cli:main"
+city-pulse-daily-brief = "city_pulse.nlp_jobs.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -33,6 +34,7 @@ dev = [
 aissemble = [
     "aissemble-inference-deploy>=1.5",
     "aissemble-inference-yolo>=1.5",
+    "aissemble-inference-sumy>=1.5",
 ]
 
 [tool.setuptools.packages.find]

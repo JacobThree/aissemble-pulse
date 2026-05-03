@@ -56,5 +56,31 @@ services:
       retries: 12
       start_period: 180s
 
+  # MLServer + aissemble Sumy (host 8090/8091 — see deploy/sumy/README.md)
+  sumy:
+    build:
+      context: .
+      dockerfile: deploy/sumy/Dockerfile
+    image: city-pulse-sumy:local
+    ports:
+      - "8090:8080"
+      - "8091:8081"
+    environment:
+      MLSERVER_HOST: "0.0.0.0"
+      MLSERVER_HTTP_PORT: "8080"
+      MLSERVER_GRPC_PORT: "8081"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/v2/health/ready')",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
+
 volumes:
   timescale_data:
