@@ -43,3 +43,18 @@ rtk bash -lc 'docker compose exec timescaledb psql -U city_pulse -d city_pulse -
 ```
 
 Copy `.env.example` → `.env` so app defaults match Compose (`DATABASE_URL` uses host port **5433**).
+
+## Ingest (HLS → Redis)
+
+Requires Redis up (`docker compose up -d redis`). Set **`INGEST_M3U8_URL`** to a public `.m3u8` (see SPEC — MDOT CHART pattern). Frames are JPEG base64 JSON blobs on list **`INGEST_QUEUE_KEY`** (default `city_pulse:frames`), capped at **`INGEST_MAX_QUEUE_LENGTH`** (oldest dropped when full).
+
+```bash
+rtk bash -lc 'source .venv/bin/activate && export INGEST_M3U8_URL="https://example.invalid/stream.m3u8" && city-pulse-ingest'
+# or: rtk bash -lc 'source .venv/bin/activate && python -m city_pulse.ingest'
+```
+
+Queue depth:
+
+```bash
+rtk bash -lc 'docker compose exec redis redis-cli LLEN city_pulse:frames'
+```
