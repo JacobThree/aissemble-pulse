@@ -1,0 +1,45 @@
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.so
+.Python
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.tox/
+htmlcov/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Env
+.venv/
+venv/
+ENV/
+env/
+
+# Build / packaging
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Tooling / OS dot-cache
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
