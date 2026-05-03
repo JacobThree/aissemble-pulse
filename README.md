@@ -76,6 +76,17 @@ rtk bash -lc 'source .venv/bin/activate && inference deploy init --target docker
 
 More checks: [`docs/mlserver-smoke.md`](docs/mlserver-smoke.md). **`YOLO_ENDPOINT`** defaults to `http://localhost:8080` (REST/OIP).
 
+## Vision worker (Redis → YOLO → Timescale)
+
+Consumes **`INGEST_QUEUE_KEY`** with [`FramePayload`](src/city_pulse/ingest/models.py) JSON (`camera_key`, `captured_at`, `frame_b64`), POSTs the frame to MLServer OIP infer, counts allowed labels above **`VISION_MIN_CONFIDENCE`**, and inserts into **`vehicle_counts`**. Needs Redis, TimescaleDB, and the **`yolo`** service (or any compatible OIP endpoint).
+
+```bash
+rtk bash -lc 'source .venv/bin/activate && city-pulse-vision-worker'
+# or: rtk bash -lc 'source .venv/bin/activate && python -m city_pulse.workers'
+```
+
+Tune labels/timeouts via **`VISION_*`** env vars (see `.env.example`).
+
 Integration smoke (skipped if MLServer down):
 
 ```bash

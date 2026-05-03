@@ -74,6 +74,37 @@ class Settings(BaseSettings):
         description="Backoff multiplier after each consecutive failure",
     )
 
+    vision_model_name: str = Field(
+        default="yolov8",
+        description="MLServer model folder name (path segment /v2/models/{name}/infer)",
+    )
+    vision_vehicle_labels: str = Field(
+        default="car,truck,bus,motorcycle",
+        description="Comma-separated COCO-style labels counted as vehicles",
+    )
+    vision_min_confidence: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+        description="Minimum detector score to count a vehicle label",
+    )
+    vision_http_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        description="HTTP client timeout for MLServer infer",
+    )
+    vision_brpop_timeout_seconds: int = Field(
+        default=5,
+        ge=1,
+        description="Redis BRPOP block timeout seconds",
+    )
+    vision_db_pool_max: int = Field(
+        default=4,
+        ge=1,
+        le=32,
+        description="Max psycopg pool connections for vision worker",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
