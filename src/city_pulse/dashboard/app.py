@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, date, datetime, timedelta
 from textwrap import dedent
 from typing import cast
@@ -20,6 +21,9 @@ from city_pulse.dashboard.data import (
     fetch_vehicle_series,
     list_cameras,
     read_ingest_heartbeat,
+    read_ingest_sample_override,
+    read_latest_overlay,
+    write_ingest_sample_override,
 )
 from city_pulse.dashboard.stream_preview import hls_preview_html
 
@@ -56,7 +60,9 @@ def _bucket_interval_from_ui(choice: object) -> str:
     return "5 minutes"
 
 
-def _chart_inputs(settings: Settings) -> tuple[list[str], tuple[date, date], str]:
+def _chart_inputs(
+    settings: Settings,
+) -> tuple[list[str], tuple[date, date], str, str]:
     picked_live = st.session_state.get("dash_cameras") or []
     raw_d = st.session_state.get("dash_dates")
     if raw_d is None:
@@ -65,11 +71,12 @@ def _chart_inputs(settings: Settings) -> tuple[list[str], tuple[date, date], str
         drange = _parse_date_range(raw_d)
     choice = st.session_state.get("dash_bucket_choice", "5 minutes (default)")
     b_interval = _bucket_interval_from_ui(choice)
-    return picked_live, drange, b_interval
+    chart_style = st.session_state.get("dash_chart_style", "Smoothed trend")
+    return picked_live, drange, b_interval, str(chart_style)
 
 
 def _draw_vehicle_chart(settings: Settings, *, static_caption: str | None) -> None:
-    picked_live, (start_dc, end_dc), b_interval = _chart_inputs(settings)
+    picked_live, (start_dc, end_dc), b_interval, chart_style = _chart_inputs(settings)
     if not picked_live:
         st.info("Select at least one camera in the sidebar.")
         return
@@ -98,23 +105,14 @@ def _draw_vehicle_chart(settings: Settings, *, static_caption: str | None) -> No
         )
         return
 
-    m1, m2, m3 = st.columns(3)
+    m1, m2 = st.columns(2)
     with m1:
-        if live.latest_detection_utc:
-            st.metric(
-                "Last detection row (UTC)",
-                live.latest_detection_utc.strftime("%H:%M:%S"),
-                help="New frames refresh this timestamp when vision writes DB rows.",
-            )
-        else:
-            st.metric("Last detection row (UTC)", "—")
-    with m2:
         st.metric(
-            f"Rows written ({live.window_minutes} min)",
-            live.rows_last_window,
-            help="Raw inserts into vehicle_counts (≈ one per sampled frame).",
+            "Total vehicles (all-time, selected cameras)",
+            live.total_vehicles_all_time,
+            help="Cumulative SUM(vehicle_count) for currently selected cameras.",
         )
-    with m3:
+    with m2:
         st.metric(
             f"Vehicles summed ({live.window_minutes} min)",
             live.vehicles_sum_last_window,
@@ -153,7 +151,9 @@ def _draw_vehicle_chart(settings: Settings, *, static_caption: str | None) -> No
         st.caption(
             f"Running with: sample every {settings.ingest_sample_interval_seconds}s · "
             f"min_confidence={settings.vision_min_confidence} · "
-            f"labels={settings.vision_vehicle_labels}"
+            f"labels={settings.vision_vehicle_labels} · "
+            f"roi={settings.vision_roi_norm or 'full-frame'} · "
+            f"dedup={'on' if settings.vision_dedup_enabled else 'off'}"
         )
 
     pivot = df.pivot_table(
@@ -163,21 +163,33 @@ def _draw_vehicle_chart(settings: Settings, *, static_caption: str | None) -> No
         aggfunc="sum",
     ).fillna(0)
     pivot.sort_index(inplace=True)
-    st.line_chart(pivot)
+    show_df = pivot
+    style_caption = "bucket sums"
+    if chart_style.lower().startswith("smoothed"):
+        # Rolling mean softens minute-to-minute zeros that look like "resets".
+        show_df = pivot.rolling(window=5, min_periods=1).mean()
+        style_caption = "smoothed (5-point rolling mean)"
+    elif chart_style.lower().startswith("bars"):
+        style_caption = "bar chart (raw bucket sums)"
+        st.bar_chart(show_df)
+    else:
+        st.line_chart(show_df)
+    if chart_style.lower().startswith("smoothed"):
+        st.line_chart(show_df)
     last_ts = pivot.index.max()
     if isinstance(last_ts, pd.Timestamp):
         ts_disp = last_ts.isoformat()
     else:
         ts_disp = str(last_ts)
     st.caption(
-        f"bucket={b_interval} • latest chart bucket UTC: {ts_disp}"
+        f"bucket={b_interval} • view={style_caption} • "
+        f"latest chart bucket UTC: {ts_disp}"
         + (f" • {static_caption}" if static_caption else "")
     )
     st.caption(
         "Chart points are **cumulative sums per UTC bucket** — the line can look "
         "stuck until more vehicles are counted in that bucket or the clock advances "
-        "to the next bucket. Use **1 minute** in the sidebar for quicker steps; "
-        "watch **Last detection** for proof that new rows are still landing."
+        "to the next bucket. Use **1 minute** in the sidebar for quicker steps."
     )
 
 
@@ -244,6 +256,20 @@ def main() -> None:
                 "motion sooner."
             ),
         )
+        st.selectbox(
+            "Chart style",
+            options=[
+                "Smoothed trend",
+                "Line (raw bucket sums)",
+                "Bars (raw bucket sums)",
+            ],
+            index=0,
+            key="dash_chart_style",
+            help=(
+                "Smoothed trend uses a short rolling mean so minute-by-minute zeros "
+                "look less jumpy while still following direction."
+            ),
+        )
         st.checkbox(
             "Auto-refresh chart",
             value=True,
@@ -253,6 +279,75 @@ def main() -> None:
                 "Requires ingest + vision writing rows for your camera."
             ),
         )
+        st.divider()
+        st.subheader("Runtime controls")
+        st.caption("These update Redis keys read by running workers.")
+        if redis_client is None:
+            st.info("Redis unavailable — runtime controls disabled.")
+        else:
+            if not settings.vision_debug_overlay_enabled:
+                st.warning(
+                    "Overlay is disabled in worker settings. Set "
+                    "`VISION_DEBUG_OVERLAY_ENABLED=1` in `.env` and restart "
+                    "`city-pulse-vision-worker` (or rerun "
+                    "`rtk bash scripts/run_local_stack.sh`)."
+                )
+            current_override = None
+            if settings.ingest_sample_interval_override_key:
+                try:
+                    current_override = read_ingest_sample_override(
+                        redis_client,
+                        key=settings.ingest_sample_interval_override_key,
+                    )
+                except redis.RedisError as exc:
+                    st.warning(f"Cannot read ingest override: {exc}")
+            default_interval = settings.ingest_sample_interval_seconds
+            active_interval = current_override or default_interval
+            st.caption(
+                f"Current ingest interval: {active_interval:.2f}s "
+                f"(default {default_interval:.2f}s)"
+            )
+            new_interval = st.slider(
+                "Ingest sample interval (seconds)",
+                min_value=0.5,
+                max_value=15.0,
+                value=float(active_interval),
+                step=0.5,
+                key="dash_ingest_interval_slider",
+                help=(
+                    "Lower means more frequent frames and smoother overlay, but "
+                    "more CPU load."
+                ),
+            )
+            if st.button(
+                "Apply ingest interval",
+                key="dash_apply_ingest_interval",
+                use_container_width=True,
+            ):
+                try:
+                    ok = write_ingest_sample_override(
+                        redis_client,
+                        key=settings.ingest_sample_interval_override_key,
+                        seconds=float(new_interval),
+                    )
+                except redis.RedisError as exc:
+                    st.error(f"Failed to set ingest interval: {exc}")
+                else:
+                    if ok:
+                        st.success(
+                            f"Ingest interval override set to {new_interval:.2f}s."
+                        )
+                    else:
+                        st.warning("Ingest override key disabled in settings/env.")
+            st.checkbox(
+                "Show live detection overlay",
+                value=False,
+                key="dash_show_overlay",
+                help=(
+                    "Shows latest YOLO-annotated frame from the vision worker. "
+                    "Requires VISION_DEBUG_OVERLAY_ENABLED=1."
+                ),
+            )
 
     refresh_td = timedelta(seconds=settings.dashboard_chart_refresh_seconds)
 
@@ -266,17 +361,77 @@ def main() -> None:
             static_caption=f"auto-refresh every {s.dashboard_chart_refresh_seconds}s",
         )
 
+    @st.fragment(run_every=refresh_td)
+    def live_overlay_fragment() -> None:
+        if not st.session_state.get("dash_show_overlay", False):
+            return
+        if redis_client is None:
+            st.info("Redis unavailable — cannot load overlay frame.")
+            return
+        try:
+            overlay = read_latest_overlay(
+                redis_client,
+                key=settings.vision_debug_overlay_key,
+            )
+        except redis.RedisError as exc:
+            st.warning(f"Overlay read failed: {exc}")
+            return
+        if overlay is None:
+            st.info(
+                "No overlay frame yet. Enable "
+                "`VISION_DEBUG_OVERLAY_ENABLED=1`, restart "
+                "`city-pulse-vision-worker`, and wait a few samples."
+            )
+            return
+        try:
+            img = base64.b64decode(overlay.annotated_jpeg_b64)
+        except ValueError:
+            st.warning("Overlay payload decode failed (invalid base64).")
+            return
+        st.image(
+            img,
+            caption=(
+                f"{overlay.camera_key} • {overlay.captured_at} UTC • "
+                f"count={overlay.vehicle_count} • "
+                f"infer={overlay.latency_ms:.1f}ms"
+            ),
+            width="content",
+        )
+
     if settings.ingest_m3u8_url:
-        st.subheader("Live stream preview")
-        st.caption(
-            f"Public MDOT HLS — {settings.ingest_camera_key}. "
-            "The player updates live segments; reload the page if the stream stalls."
-        )
-        components.html(
-            hls_preview_html(settings.ingest_m3u8_url.strip()),
-            height=400,
-            scrolling=False,
-        )
+        show_overlay = st.session_state.get("dash_show_overlay", False)
+        if show_overlay:
+            left_col, right_col = st.columns(2)
+            with left_col:
+                st.subheader("Live stream preview")
+                st.caption(
+                    f"Public MDOT HLS — {settings.ingest_camera_key}. "
+                    "The player updates live segments; "
+                    "reload the page if the stream stalls."
+                )
+                components.html(
+                    hls_preview_html(settings.ingest_m3u8_url.strip()),
+                    height=280,
+                    scrolling=False,
+                )
+            with right_col:
+                st.subheader("Live detections (annotated)")
+                live_overlay_fragment()
+        else:
+            st.subheader("Live stream preview")
+            st.caption(
+                f"Public MDOT HLS — {settings.ingest_camera_key}. "
+                "The player updates live segments; "
+                "reload the page if the stream stalls."
+            )
+            prev_col, _ = st.columns((3, 2))
+            with prev_col:
+                components.html(
+                    hls_preview_html(settings.ingest_m3u8_url.strip()),
+                    height=280,
+                    scrolling=False,
+                )
+
         st.info(
             "**Vehicle counts are separate from this video.** "
             "The player only fetches the same public `.m3u8` in your browser. "

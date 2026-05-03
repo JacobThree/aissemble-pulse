@@ -49,6 +49,13 @@ class Settings(BaseSettings):
         gt=0,
         description="Sleep between successful frame samples",
     )
+    ingest_sample_interval_override_key: str | None = Field(
+        default="city_pulse:ingest:sample_interval_seconds",
+        description=(
+            "Redis key for runtime ingest sample interval override (seconds); "
+            "empty/null disables dynamic override"
+        ),
+    )
     ingest_queue_key: str = Field(
         default="city_pulse:frames",
         description="Redis list key for frame JSON payloads",
@@ -101,6 +108,29 @@ class Settings(BaseSettings):
         le=1.0,
         description="Minimum detector score to count a vehicle label",
     )
+    vision_roi_norm: str | None = Field(
+        default=None,
+        description=(
+            "Optional ROI as normalized CSV 'x1,y1,x2,y2' in [0,1]; "
+            "counts only detections with center inside ROI"
+        ),
+    )
+    vision_dedup_enabled: bool = Field(
+        default=True,
+        description="If true, suppress near-duplicate boxes across nearby frames",
+    )
+    vision_dedup_iou_threshold: float = Field(
+        default=0.6,
+        ge=0.1,
+        le=1.0,
+        description="IoU threshold to treat same object as duplicate across frames",
+    )
+    vision_dedup_ttl_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=10.0,
+        description="Seconds to keep recent boxes for temporal dedup",
+    )
     vision_http_timeout_seconds: float = Field(
         default=120.0,
         gt=0,
@@ -116,6 +146,22 @@ class Settings(BaseSettings):
         ge=1,
         le=32,
         description="Max psycopg pool connections for vision worker",
+    )
+    vision_debug_overlay_enabled: bool = Field(
+        default=False,
+        description=(
+            "If true, vision writes latest annotated frame to Redis for dashboard"
+        ),
+    )
+    vision_debug_overlay_key: str = Field(
+        default="city_pulse:vision:last_overlay",
+        description="Redis key holding latest annotated detection frame JSON",
+    )
+    vision_debug_overlay_ttl_seconds: int = Field(
+        default=90,
+        ge=5,
+        le=3600,
+        description="TTL for latest annotated overlay frame payload in Redis",
     )
 
     sumy_endpoint: str = Field(
@@ -150,6 +196,20 @@ class Settings(BaseSettings):
     @field_validator("ingest_heartbeat_key", mode="before")
     @classmethod
     def _none_if_blank(cls, v: object) -> str | None:
+        if v is None or v == "":
+            return None
+        return str(v)
+
+    @field_validator("ingest_sample_interval_override_key", mode="before")
+    @classmethod
+    def _none_if_blank_override_key(cls, v: object) -> str | None:
+        if v is None or v == "":
+            return None
+        return str(v)
+
+    @field_validator("vision_roi_norm", mode="before")
+    @classmethod
+    def _none_if_blank_roi(cls, v: object) -> str | None:
         if v is None or v == "":
             return None
         return str(v)
