@@ -7,6 +7,7 @@ from typing import cast
 
 import redis
 import streamlit as st
+import streamlit.components.v1 as components
 
 from city_pulse.config import get_settings
 from city_pulse.dashboard.data import (
@@ -16,6 +17,7 @@ from city_pulse.dashboard.data import (
     list_cameras,
     read_ingest_heartbeat,
 )
+from city_pulse.dashboard.stream_preview import hls_preview_html
 
 
 def _default_range() -> tuple[date, date]:
@@ -69,6 +71,18 @@ def main() -> None:
         else:
             start_d = cast(date, raw)
             end_d = start_d
+
+    if settings.ingest_m3u8_url:
+        st.subheader("Live stream preview")
+        st.caption(
+            f"Public MDOT HLS — {settings.ingest_camera_key}. "
+            "The player updates live segments; reload the page if the stream stalls."
+        )
+        components.html(
+            hls_preview_html(settings.ingest_m3u8_url.strip()),
+            height=400,
+            scrolling=False,
+        )
 
     col_chart, col_brief = st.columns((3, 2))
 
