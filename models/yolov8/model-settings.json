@@ -2,6 +2,6 @@
   "name": "yolov8",
   "implementation": "aissemble_inference_yolo.YOLORuntime",
   "parameters": {
-    "model": "yolov8n.pt"
+    "model": "yolov8s.pt"
   }
 }

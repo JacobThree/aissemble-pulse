@@ -13,9 +13,12 @@ from city_pulse.oip import infer_url as infer_url_for
 
 __all__ = [
     "annotate_frame_b64",
+    "bbox_iou",
+    "count_vehicle_detections_advanced",
     "count_vehicle_detections",
     "infer_url_for",
     "infer_vehicle_count",
+    "parse_norm_roi",
     "parse_bboxes",
     "parse_infer_outputs",
     "vehicle_label_allowlist",
@@ -110,6 +113,112 @@ def parse_bboxes(body: dict[str, Any]) -> list[tuple[float, float, float, float]
     return bboxes
 
 
+def parse_norm_roi(raw: str | None) -> tuple[float, float, float, float] | None:
+    """Parse ROI string ``x1,y1,x2,y2`` normalized in [0,1]."""
+    if not raw:
+        return None
+    parts = [p.strip() for p in raw.split(",")]
+    if len(parts) != 4:
+        return None
+    try:
+        x1, y1, x2, y2 = (
+            float(parts[0]),
+            float(parts[1]),
+            float(parts[2]),
+            float(parts[3]),
+        )
+    except ValueError:
+        return None
+    if not (0.0 <= x1 < x2 <= 1.0 and 0.0 <= y1 < y2 <= 1.0):
+        return None
+    return (x1, y1, x2, y2)
+
+
+def bbox_iou(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+) -> float:
+    """Compute IoU for two ``xyxy`` boxes."""
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, (ax2 - ax1)) * max(0.0, (ay2 - ay1))
+    area_b = max(0.0, (bx2 - bx1)) * max(0.0, (by2 - by1))
+    denom = area_a + area_b - inter
+    if denom <= 0:
+        return 0.0
+    return inter / denom
+
+
+def count_vehicle_detections_advanced(
+    *,
+    labels: list[str],
+    scores: list[float],
+    bboxes: list[tuple[float, float, float, float]],
+    allowed: set[str],
+    min_confidence: float,
+    frame_width: int | None = None,
+    frame_height: int | None = None,
+    roi_norm: tuple[float, float, float, float] | None = None,
+    dedup_recent: (
+        list[tuple[str, tuple[float, float, float, float], datetime]] | None
+    ) = None,
+    dedup_iou_threshold: float = 0.6,
+    dedup_ttl_seconds: float = 2.0,
+    now_utc: datetime | None = None,
+) -> tuple[int, list[tuple[str, tuple[float, float, float, float], datetime]]]:
+    """Count detections with optional ROI filter and temporal de-dup."""
+    now = now_utc or datetime.now(UTC)
+    recent = dedup_recent or []
+    if roi_norm and frame_width and frame_height:
+        rx1 = roi_norm[0] * frame_width
+        ry1 = roi_norm[1] * frame_height
+        rx2 = roi_norm[2] * frame_width
+        ry2 = roi_norm[3] * frame_height
+    else:
+        rx1 = ry1 = rx2 = ry2 = None
+
+    kept_recent: list[tuple[str, tuple[float, float, float, float], datetime]] = []
+    for lab, bb, ts in recent:
+        if (now - ts).total_seconds() <= dedup_ttl_seconds:
+            kept_recent.append((lab, bb, ts))
+    recent = kept_recent
+
+    n = min(len(labels), len(scores), len(bboxes))
+    count = 0
+    for i in range(n):
+        lab = labels[i].lower()
+        score = scores[i]
+        if lab not in allowed or score < min_confidence:
+            continue
+        bb = bboxes[i]
+        if rx1 is not None:
+            cx = (bb[0] + bb[2]) / 2.0
+            cy = (bb[1] + bb[3]) / 2.0
+            if not (rx1 <= cx <= rx2 and ry1 <= cy <= ry2):
+                continue
+        is_dup = False
+        for old_lab, old_bb, _ in recent:
+            if old_lab != lab:
+                continue
+            if bbox_iou(bb, old_bb) >= dedup_iou_threshold:
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        count += 1
+        recent.append((lab, bb, now))
+    return count, recent
+
+
 def annotate_frame_b64(
     *,
     frame_b64: str,
@@ -118,6 +227,7 @@ def annotate_frame_b64(
     bboxes: list[tuple[float, float, float, float]],
     min_confidence: float,
     allowed: set[str],
+    roi_norm: tuple[float, float, float, float] | None = None,
 ) -> str | None:
     """Draw green YOLO boxes on a JPEG payload and return base64 JPEG."""
     if not frame_b64:
@@ -131,6 +241,22 @@ def annotate_frame_b64(
         if frame is None:
             return None
         h, w = frame.shape[:2]
+        if roi_norm:
+            rx1 = int(round(roi_norm[0] * w))
+            ry1 = int(round(roi_norm[1] * h))
+            rx2 = int(round(roi_norm[2] * w))
+            ry2 = int(round(roi_norm[3] * h))
+            cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (255, 80, 80), 2)
+            cv2.putText(
+                frame,
+                "ROI",
+                (rx1, max(0, ry1 - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 80, 80),
+                2,
+                cv2.LINE_AA,
+            )
         n = min(len(labels), len(scores), len(bboxes))
         for i in range(n):
             label = labels[i].lower()

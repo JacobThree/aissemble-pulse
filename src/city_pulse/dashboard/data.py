@@ -88,7 +88,7 @@ class LiveRollupStats:
     """Recent raw DB activity for the live strip (independent of time_bucket)."""
 
     latest_detection_utc: datetime | None
-    rows_last_window: int
+    total_vehicles_all_time: int
     vehicles_sum_last_window: int
     window_minutes: int
 
@@ -106,18 +106,28 @@ def fetch_live_rollup(
         cur.execute(
             """
             SELECT MAX(time) AS latest,
-                   COUNT(*)::bigint AS n_rows,
+                   COALESCE(SUM(vehicle_count), 0)::bigint AS n_total,
                    COALESCE(SUM(vehicle_count), 0)::bigint AS n_vehicles
+            FROM vehicle_counts
+            WHERE camera_location = ANY(%s)
+            """,
+            (cameras,),
+        )
+        total_row = cur.fetchone()
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(vehicle_count), 0)::bigint AS n_vehicles_recent
             FROM vehicle_counts
             WHERE camera_location = ANY(%s)
               AND time >= NOW() - (%s::integer * INTERVAL '1 minute')
             """,
             (cameras, window_minutes),
         )
-        row = cur.fetchone()
-    if row is None or row[0] is None:
+        recent_row = cur.fetchone()
+    if total_row is None or total_row[0] is None:
         return LiveRollupStats(None, 0, 0, window_minutes)
-    latest, n_rows, n_veh = row
+    latest, n_total, _ = total_row
+    n_veh_recent = 0 if recent_row is None else int(recent_row[0])
     if isinstance(latest, datetime):
         if latest.tzinfo is None:
             latest = latest.replace(tzinfo=UTC)
@@ -125,7 +135,7 @@ def fetch_live_rollup(
             latest = latest.astimezone(UTC)
     else:
         latest = None
-    return LiveRollupStats(latest, int(n_rows), int(n_veh), window_minutes)
+    return LiveRollupStats(latest, int(n_total), n_veh_recent, window_minutes)
 
 
 def fetch_hourly_series(
