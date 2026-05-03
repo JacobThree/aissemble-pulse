@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from textwrap import dedent
 from typing import cast
 
 import pandas as pd
@@ -15,6 +16,7 @@ from city_pulse.config.settings import Settings
 from city_pulse.dashboard.data import (
     connect_readonly,
     fetch_latest_brief,
+    fetch_live_rollup,
     fetch_vehicle_series,
     list_cameras,
     read_ingest_heartbeat,
@@ -43,6 +45,17 @@ def _parse_date_range(raw: date | tuple[date, ...]) -> tuple[date, date]:
     return raw, raw
 
 
+def _bucket_interval_from_ui(choice: object) -> str:
+    """Map sidebar label to a Postgres ``interval`` string for ``time_bucket``."""
+    s = str(choice).lower()
+    if s.startswith("1 minute"):
+        return "1 minute"
+    if s.startswith("1 hour"):
+        return "1 hour"
+    # "5 minutes (default|live|…)" and legacy session keys
+    return "5 minutes"
+
+
 def _chart_inputs(settings: Settings) -> tuple[list[str], tuple[date, date], str]:
     picked_live = st.session_state.get("dash_cameras") or []
     raw_d = st.session_state.get("dash_dates")
@@ -50,8 +63,8 @@ def _chart_inputs(settings: Settings) -> tuple[list[str], tuple[date, date], str
         drange = _default_date_range()
     else:
         drange = _parse_date_range(raw_d)
-    choice = st.session_state.get("dash_bucket_choice", "5 minutes (live)")
-    b_interval = "5 minutes" if str(choice).startswith("5") else "1 hour"
+    choice = st.session_state.get("dash_bucket_choice", "5 minutes (default)")
+    b_interval = _bucket_interval_from_ui(choice)
     return picked_live, drange, b_interval
 
 
@@ -69,16 +82,79 @@ def _draw_vehicle_chart(settings: Settings, *, static_caption: str | None) -> No
             end_inclusive=end_dc,
             bucket_interval=b_interval,
         )
+        live = fetch_live_rollup(conn_chart, cameras=picked_live, window_minutes=15)
     finally:
         conn_chart.close()
 
     if df.empty:
         st.warning(
-            "No rows in this range — run **city-pulse-ingest** + "
-            "**city-pulse-vision-worker** with the same `INGEST_CAMERA_KEY`, "
-            "or pick cameras that have data."
+            "No `vehicle_counts` rows in this range for the selected camera(s). "
+            "The **live HLS player** only loads the public stream in your browser — "
+            "it does **not** write the database. "
+            "Counts need **city-pulse-ingest** (sample → Redis) and "
+            "**city-pulse-vision-worker** (Redis → YOLO → DB), e.g. "
+            "`rtk city-pulse-stack`, matching `INGEST_CAMERA_KEY` in the sidebar, "
+            "or pick cameras that already have data."
         )
         return
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        if live.latest_detection_utc:
+            st.metric(
+                "Last detection row (UTC)",
+                live.latest_detection_utc.strftime("%H:%M:%S"),
+                help="New frames refresh this timestamp when vision writes DB rows.",
+            )
+        else:
+            st.metric("Last detection row (UTC)", "—")
+    with m2:
+        st.metric(
+            f"Rows written ({live.window_minutes} min)",
+            live.rows_last_window,
+            help="Raw inserts into vehicle_counts (≈ one per sampled frame).",
+        )
+    with m3:
+        st.metric(
+            f"Vehicles summed ({live.window_minutes} min)",
+            live.vehicles_sum_last_window,
+            help=(
+                "Sum of bounding-box counts from YOLO on sampled frames — not "
+                "'every car on screen,' and not unique vehicles across frames."
+            ),
+        )
+
+    with st.expander("Why totals look much lower than the live video"):
+        st.markdown(
+            dedent(
+                """
+                The player shows **continuous** video. The database only sees
+                **occasional still JPEGs** from ingest, each run through a **small**
+                detector.
+
+                - **Sparse sampling** — one frame every
+                  **INGEST_SAMPLE_INTERVAL_SECONDS** (see `.env`). Almost all video
+                  frames are never scored.
+                - **Boxes, not a census** — we add up **YOLO detections** whose labels
+                  are in **VISION_VEHICLE_LABELS** and scores ≥
+                  **VISION_MIN_CONFIDENCE**. Far away, overlapping, or poorly lit
+                  vehicles are often missed.
+                - **Model + feed** — default Docker image uses **YOLOv8n** on
+                  compressed HLS; night and glare cost recall. This is an **activity
+                  index**, not a traffic survey.
+
+                **To nudge counts up:** shorten the ingest interval, slightly lower
+                **VISION_MIN_CONFIDENCE**, raise **INGEST_JPEG_QUALITY**, or switch
+                `models/yolov8/model-settings.json` to a larger `.pt` and **rebuild**
+                the `yolo` image. Restart workers and Streamlit after `.env` changes.
+                """
+            )
+        )
+        st.caption(
+            f"Running with: sample every {settings.ingest_sample_interval_seconds}s · "
+            f"min_confidence={settings.vision_min_confidence} · "
+            f"labels={settings.vision_vehicle_labels}"
+        )
 
     pivot = df.pivot_table(
         index="bucket",
@@ -93,10 +169,16 @@ def _draw_vehicle_chart(settings: Settings, *, static_caption: str | None) -> No
         ts_disp = last_ts.isoformat()
     else:
         ts_disp = str(last_ts)
-    bits = [f"bucket={b_interval}", f"latest bucket UTC: {ts_disp}"]
-    if static_caption:
-        bits.append(static_caption)
-    st.caption(" • ".join(bits))
+    st.caption(
+        f"bucket={b_interval} • latest chart bucket UTC: {ts_disp}"
+        + (f" • {static_caption}" if static_caption else "")
+    )
+    st.caption(
+        "Chart points are **cumulative sums per UTC bucket** — the line can look "
+        "stuck until more vehicles are counted in that bucket or the clock advances "
+        "to the next bucket. Use **1 minute** in the sidebar for quicker steps; "
+        "watch **Last detection** for proof that new rows are still landing."
+    )
 
 
 def main() -> None:
@@ -147,11 +229,20 @@ def main() -> None:
         )
 
         st.selectbox(
-            "Chart bucket (Timescale)",
-            options=["5 minutes (live)", "1 hour"],
-            index=0,
+            "Chart bucket (Timescale, UTC)",
+            options=[
+                "1 minute (most responsive)",
+                "5 minutes (default)",
+                "1 hour",
+            ],
+            index=1,
             key="dash_bucket_choice",
-            help="5-minute buckets show counts rising during the current interval.",
+            help=(
+                "Each point is the **sum** of all detections in that time window. "
+                "Within one bucket the line stays flat until more frames arrive or "
+                "the clock enters the next bucket. Use 1-minute buckets to see "
+                "motion sooner."
+            ),
         )
         st.checkbox(
             "Auto-refresh chart",
@@ -186,11 +277,47 @@ def main() -> None:
             height=400,
             scrolling=False,
         )
+        st.info(
+            "**Vehicle counts are separate from this video.** "
+            "The player only fetches the same public `.m3u8` in your browser. "
+            "The database updates only when **city-pulse-ingest** and "
+            "**city-pulse-vision-worker** run "
+            "(frames → Redis → YOLO :8080 → Timescale). "
+            "Use `rtk city-pulse-stack` for ingest + vision + this UI, "
+            "or check queue / heartbeat under **Vehicle counts** and **Ops**."
+        )
 
     col_chart, col_brief = st.columns((3, 2))
 
     with col_chart:
         st.subheader("Vehicle counts")
+        parts: list[str] = []
+        if redis_client is not None:
+            try:
+                qd = int(cast(int, redis_client.llen(settings.ingest_queue_key)))
+                parts.append(f"Redis frame queue: **{qd}**")
+            except redis.RedisError as exc:
+                parts.append(f"Redis queue error: {exc}")
+        else:
+            parts.append("Redis unavailable — cannot show queue depth")
+        if settings.ingest_heartbeat_key and redis_client is not None:
+            try:
+                hb_q = read_ingest_heartbeat(
+                    redis_client,
+                    key=settings.ingest_heartbeat_key,
+                )
+                if hb_q:
+                    parts.append(f"Last ingest enqueue (UTC): {hb_q}")
+                else:
+                    parts.append(
+                        "Ingest heartbeat missing — start **city-pulse-ingest**"
+                    )
+            except redis.RedisError as exc:
+                parts.append(f"Heartbeat error: {exc}")
+        elif settings.ingest_heartbeat_key and redis_client is None:
+            parts.append("(heartbeat needs Redis)")
+        if parts:
+            st.caption(" · ".join(parts))
         if st.session_state.get("dash_autorefresh", True):
             live_vehicle_chart_fragment()
         else:

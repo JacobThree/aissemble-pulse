@@ -21,7 +21,7 @@ The following packages are installed from PyPI:
 - mlserver>=1.6.0
 - ultralytics (required by the YOLO runtime inside the container)
 
-The Dockerfile installs **`opencv-python-headless`** after deps resolve (replacing **`opencv-python`**) so **`cv2`** works on slim images without GUI libs like **`libxcb`**.
+The Dockerfile installs `**opencv-python-headless`** after deps resolve (replacing `**opencv-python**`) so `**cv2**` works on slim images without GUI libs like `**libxcb**`.
 
 ## Quick Start
 

@@ -82,6 +82,51 @@ def fetch_vehicle_series(
     return df
 
 
+@dataclass(frozen=True)
+class LiveRollupStats:
+    """Recent raw DB activity for the live strip (independent of time_bucket)."""
+
+    latest_detection_utc: datetime | None
+    rows_last_window: int
+    vehicles_sum_last_window: int
+    window_minutes: int
+
+
+def fetch_live_rollup(
+    conn: Connection,
+    *,
+    cameras: list[str],
+    window_minutes: int = 15,
+) -> LiveRollupStats:
+    """How active ingest+vision were recently (raw rows, not time_bucket)."""
+    if not cameras:
+        return LiveRollupStats(None, 0, 0, window_minutes)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT MAX(time) AS latest,
+                   COUNT(*)::bigint AS n_rows,
+                   COALESCE(SUM(vehicle_count), 0)::bigint AS n_vehicles
+            FROM vehicle_counts
+            WHERE camera_location = ANY(%s)
+              AND time >= NOW() - (%s::integer * INTERVAL '1 minute')
+            """,
+            (cameras, window_minutes),
+        )
+        row = cur.fetchone()
+    if row is None or row[0] is None:
+        return LiveRollupStats(None, 0, 0, window_minutes)
+    latest, n_rows, n_veh = row
+    if isinstance(latest, datetime):
+        if latest.tzinfo is None:
+            latest = latest.replace(tzinfo=UTC)
+        else:
+            latest = latest.astimezone(UTC)
+    else:
+        latest = None
+    return LiveRollupStats(latest, int(n_rows), int(n_veh), window_minutes)
+
+
 def fetch_hourly_series(
     conn: Connection,
     *,
