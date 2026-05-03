@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from json import loads
 
 import pandas as pd
 import psycopg
@@ -186,3 +187,76 @@ def read_ingest_heartbeat(
     if isinstance(raw, bytes):
         return raw.decode("utf-8")
     return str(raw)
+
+
+def read_ingest_sample_override(
+    redis_client: redis.Redis,
+    *,
+    key: str | None,
+) -> float | None:
+    """Return runtime ingest sample interval override from Redis, if set."""
+    if not key:
+        return None
+    raw = redis_client.get(key)
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    try:
+        val = float(str(raw))
+    except ValueError:
+        return None
+    if val <= 0:
+        return None
+    return val
+
+
+def write_ingest_sample_override(
+    redis_client: redis.Redis,
+    *,
+    key: str | None,
+    seconds: float,
+) -> bool:
+    """Set runtime ingest sample override. Returns False if key is disabled."""
+    if not key:
+        return False
+    redis_client.set(key, f"{seconds:.3f}")
+    return True
+
+
+@dataclass(frozen=True)
+class OverlayRow:
+    camera_key: str
+    captured_at: str
+    latency_ms: float
+    vehicle_count: int
+    annotated_jpeg_b64: str
+
+
+def read_latest_overlay(
+    redis_client: redis.Redis,
+    *,
+    key: str,
+) -> OverlayRow | None:
+    """Read latest vision overlay payload from Redis JSON blob."""
+    raw = redis_client.get(key)
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    try:
+        obj = loads(str(raw))
+    except ValueError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    try:
+        return OverlayRow(
+            camera_key=str(obj["camera_key"]),
+            captured_at=str(obj["captured_at"]),
+            latency_ms=float(obj["latency_ms"]),
+            vehicle_count=int(obj["vehicle_count"]),
+            annotated_jpeg_b64=str(obj["annotated_jpeg_b64"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None

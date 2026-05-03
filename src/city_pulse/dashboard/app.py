@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, date, datetime, timedelta
 from textwrap import dedent
 from typing import cast
@@ -20,6 +21,9 @@ from city_pulse.dashboard.data import (
     fetch_vehicle_series,
     list_cameras,
     read_ingest_heartbeat,
+    read_ingest_sample_override,
+    read_latest_overlay,
+    write_ingest_sample_override,
 )
 from city_pulse.dashboard.stream_preview import hls_preview_html
 
@@ -253,6 +257,68 @@ def main() -> None:
                 "Requires ingest + vision writing rows for your camera."
             ),
         )
+        st.divider()
+        st.subheader("Runtime controls")
+        st.caption("These update Redis keys read by running workers.")
+        if redis_client is None:
+            st.info("Redis unavailable — runtime controls disabled.")
+        else:
+            current_override = None
+            if settings.ingest_sample_interval_override_key:
+                try:
+                    current_override = read_ingest_sample_override(
+                        redis_client,
+                        key=settings.ingest_sample_interval_override_key,
+                    )
+                except redis.RedisError as exc:
+                    st.warning(f"Cannot read ingest override: {exc}")
+            default_interval = settings.ingest_sample_interval_seconds
+            active_interval = current_override or default_interval
+            st.caption(
+                f"Current ingest interval: {active_interval:.2f}s "
+                f"(default {default_interval:.2f}s)"
+            )
+            new_interval = st.slider(
+                "Ingest sample interval (seconds)",
+                min_value=0.5,
+                max_value=15.0,
+                value=float(active_interval),
+                step=0.5,
+                key="dash_ingest_interval_slider",
+                help=(
+                    "Lower means more frequent frames and smoother overlay, but "
+                    "more CPU load."
+                ),
+            )
+            if st.button(
+                "Apply ingest interval",
+                key="dash_apply_ingest_interval",
+                use_container_width=True,
+            ):
+                try:
+                    ok = write_ingest_sample_override(
+                        redis_client,
+                        key=settings.ingest_sample_interval_override_key,
+                        seconds=float(new_interval),
+                    )
+                except redis.RedisError as exc:
+                    st.error(f"Failed to set ingest interval: {exc}")
+                else:
+                    if ok:
+                        st.success(
+                            f"Ingest interval override set to {new_interval:.2f}s."
+                        )
+                    else:
+                        st.warning("Ingest override key disabled in settings/env.")
+            st.checkbox(
+                "Show live detection overlay",
+                value=False,
+                key="dash_show_overlay",
+                help=(
+                    "Shows latest YOLO-annotated frame from the vision worker. "
+                    "Requires VISION_DEBUG_OVERLAY_ENABLED=1."
+                ),
+            )
 
     refresh_td = timedelta(seconds=settings.dashboard_chart_refresh_seconds)
 
@@ -264,6 +330,43 @@ def main() -> None:
         _draw_vehicle_chart(
             s,
             static_caption=f"auto-refresh every {s.dashboard_chart_refresh_seconds}s",
+        )
+
+    @st.fragment(run_every=refresh_td)
+    def live_overlay_fragment() -> None:
+        if not st.session_state.get("dash_show_overlay", False):
+            return
+        if redis_client is None:
+            st.info("Redis unavailable — cannot load overlay frame.")
+            return
+        try:
+            overlay = read_latest_overlay(
+                redis_client,
+                key=settings.vision_debug_overlay_key,
+            )
+        except redis.RedisError as exc:
+            st.warning(f"Overlay read failed: {exc}")
+            return
+        if overlay is None:
+            st.info(
+                "No overlay frame yet. Enable "
+                "`VISION_DEBUG_OVERLAY_ENABLED=1`, restart "
+                "`city-pulse-vision-worker`, and wait a few samples."
+            )
+            return
+        try:
+            img = base64.b64decode(overlay.annotated_jpeg_b64)
+        except ValueError:
+            st.warning("Overlay payload decode failed (invalid base64).")
+            return
+        st.image(
+            img,
+            caption=(
+                f"{overlay.camera_key} • {overlay.captured_at} UTC • "
+                f"count={overlay.vehicle_count} • "
+                f"infer={overlay.latency_ms:.1f}ms"
+            ),
+            use_container_width=True,
         )
 
     if settings.ingest_m3u8_url:
@@ -286,6 +389,9 @@ def main() -> None:
             "Use `rtk city-pulse-stack` for ingest + vision + this UI, "
             "or check queue / heartbeat under **Vehicle counts** and **Ops**."
         )
+        if st.session_state.get("dash_show_overlay", False):
+            st.subheader("Live detections (annotated)")
+            live_overlay_fragment()
 
     col_chart, col_brief = st.columns((3, 2))
 

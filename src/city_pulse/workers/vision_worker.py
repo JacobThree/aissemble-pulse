@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from json import dumps
 from typing import cast
 
 import httpx
@@ -16,9 +17,11 @@ from city_pulse.db.pool import create_pool
 from city_pulse.db.vehicle_counts import insert_vehicle_count
 from city_pulse.ingest.models import FramePayload
 from city_pulse.workers.inference import (
+    annotate_frame_b64,
     count_vehicle_detections,
     infer_url_for,
     infer_vehicle_count,
+    parse_bboxes,
     vehicle_label_allowlist,
 )
 
@@ -70,6 +73,33 @@ def process_next(
             allowed=allowed,
             min_confidence=settings.vision_min_confidence,
         )
+        if settings.vision_debug_overlay_enabled:
+            try:
+                boxes = parse_bboxes(out["body"])
+                overlay_b64 = annotate_frame_b64(
+                    frame_b64=payload.frame_b64,
+                    labels=out["labels"],
+                    scores=out["scores"],
+                    bboxes=boxes,
+                    min_confidence=settings.vision_min_confidence,
+                    allowed=allowed,
+                )
+                if overlay_b64:
+                    redis_client.set(
+                        settings.vision_debug_overlay_key,
+                        dumps(
+                            {
+                                "camera_key": payload.camera_key,
+                                "captured_at": cap.isoformat(),
+                                "latency_ms": float(out["latency_ms"]),
+                                "vehicle_count": count,
+                                "annotated_jpeg_b64": overlay_b64,
+                            }
+                        ),
+                        ex=settings.vision_debug_overlay_ttl_seconds,
+                    )
+            except Exception:
+                logger.exception("overlay_write_failed camera=%s", payload.camera_key)
         with pool.connection() as conn:
             insert_vehicle_count(
                 conn,

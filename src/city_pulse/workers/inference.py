@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+import numpy as np
 
 from city_pulse.oip import infer_url as infer_url_for
 
 __all__ = [
+    "annotate_frame_b64",
     "count_vehicle_detections",
     "infer_url_for",
     "infer_vehicle_count",
+    "parse_bboxes",
     "parse_infer_outputs",
     "vehicle_label_allowlist",
 ]
@@ -60,6 +64,104 @@ def parse_infer_outputs(body: dict[str, Any]) -> tuple[list[str], list[float]]:
         except (TypeError, ValueError):
             scores.append(0.0)
     return labels, scores
+
+
+def parse_bboxes(body: dict[str, Any]) -> list[tuple[float, float, float, float]]:
+    """Extract 4-tuples ``(x1, y1, x2, y2)`` if model returns bbox-like output."""
+    outputs = body.get("outputs", [])
+    box_out = next(
+        (
+            o
+            for o in outputs
+            if str(o.get("name", "")).lower() in {"boxes", "bboxes", "xyxy"}
+        ),
+        None,
+    )
+    if not box_out or not isinstance(box_out.get("data"), list):
+        return []
+    raw = box_out["data"]
+    bboxes: list[tuple[float, float, float, float]] = []
+    # Common case: [[x1,y1,x2,y2], ...]
+    if raw and isinstance(raw[0], list):
+        for item in raw:
+            if not isinstance(item, list) or len(item) < 4:
+                continue
+            try:
+                bboxes.append(
+                    (float(item[0]), float(item[1]), float(item[2]), float(item[3]))
+                )
+            except (TypeError, ValueError):
+                continue
+        return bboxes
+
+    # Flattened case: [x1,y1,x2,y2,...]
+    for i in range(0, len(raw) - 3, 4):
+        try:
+            bboxes.append(
+                (
+                    float(raw[i]),
+                    float(raw[i + 1]),
+                    float(raw[i + 2]),
+                    float(raw[i + 3]),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return bboxes
+
+
+def annotate_frame_b64(
+    *,
+    frame_b64: str,
+    labels: list[str],
+    scores: list[float],
+    bboxes: list[tuple[float, float, float, float]],
+    min_confidence: float,
+    allowed: set[str],
+) -> str | None:
+    """Draw green YOLO boxes on a JPEG payload and return base64 JPEG."""
+    if not frame_b64:
+        return None
+    try:
+        import cv2
+
+        img_raw = base64.b64decode(frame_b64)
+        np_buf = np.frombuffer(img_raw, dtype=np.uint8)
+        frame = cv2.imdecode(np_buf, cv2.IMREAD_COLOR)
+        if frame is None:
+            return None
+        h, w = frame.shape[:2]
+        n = min(len(labels), len(scores), len(bboxes))
+        for i in range(n):
+            label = labels[i].lower()
+            score = scores[i]
+            if label not in allowed or score < min_confidence:
+                continue
+            x1f, y1f, x2f, y2f = bboxes[i]
+            x1 = max(0, min(w - 1, int(round(x1f))))
+            y1 = max(0, min(h - 1, int(round(y1f))))
+            x2 = max(0, min(w - 1, int(round(x2f))))
+            y2 = max(0, min(h - 1, int(round(y2f))))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (64, 255, 64), 2)
+            text = f"{labels[i]} {score:.2f}"
+            cv2.putText(
+                frame,
+                text,
+                (x1, max(0, y1 - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (64, 255, 64),
+                1,
+                cv2.LINE_AA,
+            )
+        ok, out_buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok or out_buf is None:
+            return None
+        return base64.standard_b64encode(out_buf.tobytes()).decode("ascii")
+    except Exception:
+        return None
 
 
 def infer_vehicle_count(

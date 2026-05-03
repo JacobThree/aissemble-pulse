@@ -39,6 +39,31 @@ def frame_to_b64_jpeg(frame: Any, *, jpeg_quality: int = 85) -> str | None:
     return base64.standard_b64encode(buf.tobytes()).decode("ascii")
 
 
+def _effective_sample_interval_seconds(settings: Settings, redis_client: Any) -> float:
+    """Read runtime override from Redis if configured, else return static setting."""
+    base = settings.ingest_sample_interval_seconds
+    key = settings.ingest_sample_interval_override_key
+    if not key:
+        return base
+    try:
+        raw = redis_client.get(key)
+    except RedisError:
+        return base
+    if raw is None:
+        return base
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid ingest sample interval override %r on key %s", raw, key)
+        return base
+    if val <= 0:
+        logger.warning(
+            "Ignoring non-positive ingest sample interval override %.3f", val
+        )
+        return base
+    return val
+
+
 def run_ingest_loop(
     *,
     settings: Settings,
@@ -91,7 +116,7 @@ def run_ingest_loop(
             if b64 is None:
                 metrics.frames_drop_read_fail += 1
                 logger.warning("JPEG encode failed; skipping frame")
-                sleep_fn(settings.ingest_sample_interval_seconds)
+                sleep_fn(_effective_sample_interval_seconds(settings, redis_client))
                 continue
 
             payload = FramePayload(
@@ -119,6 +144,6 @@ def run_ingest_loop(
                 if limit is not None and iterations >= limit:
                     break
 
-            sleep_fn(settings.ingest_sample_interval_seconds)
+            sleep_fn(_effective_sample_interval_seconds(settings, redis_client))
     finally:
         cap.release()

@@ -49,6 +49,13 @@ class Settings(BaseSettings):
         gt=0,
         description="Sleep between successful frame samples",
     )
+    ingest_sample_interval_override_key: str | None = Field(
+        default="city_pulse:ingest:sample_interval_seconds",
+        description=(
+            "Redis key for runtime ingest sample interval override (seconds); "
+            "empty/null disables dynamic override"
+        ),
+    )
     ingest_queue_key: str = Field(
         default="city_pulse:frames",
         description="Redis list key for frame JSON payloads",
@@ -117,6 +124,22 @@ class Settings(BaseSettings):
         le=32,
         description="Max psycopg pool connections for vision worker",
     )
+    vision_debug_overlay_enabled: bool = Field(
+        default=False,
+        description=(
+            "If true, vision writes latest annotated frame to Redis for dashboard"
+        ),
+    )
+    vision_debug_overlay_key: str = Field(
+        default="city_pulse:vision:last_overlay",
+        description="Redis key holding latest annotated detection frame JSON",
+    )
+    vision_debug_overlay_ttl_seconds: int = Field(
+        default=90,
+        ge=5,
+        le=3600,
+        description="TTL for latest annotated overlay frame payload in Redis",
+    )
 
     sumy_endpoint: str = Field(
         default="http://localhost:8090",
@@ -150,6 +173,13 @@ class Settings(BaseSettings):
     @field_validator("ingest_heartbeat_key", mode="before")
     @classmethod
     def _none_if_blank(cls, v: object) -> str | None:
+        if v is None or v == "":
+            return None
+        return str(v)
+
+    @field_validator("ingest_sample_interval_override_key", mode="before")
+    @classmethod
+    def _none_if_blank_override_key(cls, v: object) -> str | None:
         if v is None or v == "":
             return None
         return str(v)
