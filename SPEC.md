@@ -4,7 +4,9 @@ _Portfolio MLOps demo: vision + NLP on public feeds using [aiSSEMBLE Inference](
 
 _Source: distilled from `inital ai convo`; aligned to `.cursor/rules/spec-driven-development.md`._
 
-_All documented shell invocations obey `.cursor/rules/stack-runtime.md`: **outer prefix `rtk`.**_
+_All documented shell invocations obey `.cursor/rules/stack-runtime.md`: **outer prefix `rtk`._
+
+_For phased implementation tasks, checkpoints, and risk table, see **`PLAN.md`**._
 
 ---
 
@@ -16,7 +18,7 @@ Correct these before implementation proceeds.
 2. **Packaging:** Services run in **Docker** / **Compose** locally and on VPS; MLServer/Kubernetes is a later stretch, not MVP.
 3. **Feeds:** Only **public** MDOT CHART **HLS** (and optionally named public EarthCam/port URLs); no authenticated or non-public cameras.
 4. **Auth:** Dashboard is **operator-local** — no multi-tenant login for v1 unless added later.
-5. **Orchestration:** **FastAPI** hosts health/config glue; Streamlit reads DB directly or via thin API — pick one stack-wide pattern in Plan phase (`Ask first` if splitting).
+5. **Orchestration:** **FastAPI** = health/metadata only MVP; **Streamlit** connects to Timescale via **read-only DB role** inside Compose (see **Resolved questions**).
 6. **Versions:** Exact PyPI pins for aiSSEMBLE wheels follow whatever is current on PyPI when `pyproject.toml` is added (`Ask first` to freeze).
 
 ---
@@ -71,8 +73,8 @@ Full commands once repo layout exists; adjust paths if repo uses `src/` layout. 
 # Infra + app (from repo root; compose filename may differ)
 rtk docker compose up -d --build
 
-# Python env (alternative to containerized dev)
-rtk python -m venv .venv
+# Python env (alternative to containerized dev; use 3.12+ if `python` is <3.11)
+rtk python3.12 -m venv .venv
 rtk bash -lc 'source .venv/bin/activate && pip install -e ".[dev]"'
 
 # Tests
@@ -96,9 +98,9 @@ rtk inference deploy init --target docker
 # rtk inference deploy init --target kubernetes --target kserve   # later
 ```
 
-_Multi-step shell state (activate venv interactively)_: use **`rtk bash -lc '…'`** so the whole snippet stays under `rtk` per stack-runtime.
+_Multi-step shell state (activate venv interactively):_ use **`rtk bash -lc '…'`** so the whole snippet stays under `rtk` per stack-runtime.
 
-_Pre-scaffold_: only installs/Compose marked "planned"; update when Make/`uv` tooling is introduced._
+_Pre-scaffold:_ only installs/Compose marked "planned"; update when Make/`uv` tooling is introduced.
 
 ---
 
@@ -176,11 +178,13 @@ Prefer **explicit** error handling around `VideoCapture.open` retries; **never**
 
 ## Testing Strategy
 
-| Level | Scope | Framework | expectation |
-| --- | --- | --- | --- |
-| Unit | Parsers (m3u8 URL validation), aggregation math, config loading | **pytest** | Cover edge cases + Golden JSON for aggregates |
-| Integration | Redis round-trip with fakes; MLServer mocked via **responses**/**pytest-httpserver** | **pytest** | Critical paths ingest → count insert |
+
+| Level              | Scope                                                                                | Framework                                        | expectation                                    |
+| ------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------ | ---------------------------------------------- |
+| Unit               | Parsers (m3u8 URL validation), aggregation math, config loading                      | **pytest**                                       | Cover edge cases + Golden JSON for aggregates  |
+| Integration        | Redis round-trip with fakes; MLServer mocked via **responses**/**pytest-httpserver** | **pytest**                                       | Critical paths ingest → count insert           |
 | E2E (optional MVP) | `docker compose` smoke: one frame path through DB row | Makefile script or pytest + **`testcontainers`** | Manual acceptable for v1 if automated is heavy |
+
 
 **Coverage:** Aim **≥75%** on `city_pulse.ingest`, `workers`, `nlp_jobs`; UI can stay thin.
 
@@ -230,28 +234,36 @@ Specific, testable “done” for MVP (maps to Prior `F1–F8`):
 
 ---
 
-## Open Questions
+## Resolved questions (recommended answers)
 
-- **Compose vs split topology:** Everything on Fedora VM vs ingestion on Mac + remote stacks (impacts Commands and Compose file).
-- **Vehicle taxonomy:** Single `vehicle_count` rollup vs breakdown by COCO class IDs (`car`, `truck`, `bus`, …).
-- **Anomaly / “interesting day” heuristic:** Rules-based top-N busy hours vs z-score vs static threshold feeding Sumy.
-- **Operational:** Exact **GIS → `camera_id` list** checklist for Towson exits (script + pinned export vs manual config).
-- **Streamlit ↔ DB:** Direct SQL from Streamlit vs read-only REST from FastAPI (security/consistency vs speed).
+
+| Question                                 | Recommendation                                                                                                                                                                                                                                                                                                                                                                                  | Why                                                                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Compose vs split topology**            | **Single Docker Compose stack** on one machine (Fedora Proxmox VM, DO VPS, or Docker Desktop Mac). Hybrid “ingest on laptop + Redis/DB on VPS” stays **defer** until VPS cannot run OpenCV+HLS cleanly.                                                                                                                                                                                         | One network boundary, reproducible README, smallest moving parts for portfolio reviewer.                      |
+| **Vehicle taxonomy**                     | **Single `vehicle_count` for MVP**: sum detections whose label ∈ `{car, truck, bus, motorcycle}` — exact id list config-driven from model labels file. Optional **stretch:** add breakdown columns after MVP when queries need commodity vs heavy split.                                                                                                                                        | Matches Appendix B schema; avoids migration churn during first demo.                                          |
+| **Anomaly / “interesting day” for Sumy** | **Rules-first MVP:** roll hourly totals; narrative inputs = (1) peak hour + magnitude vs daily median hour, (2) top **3** hours by count, (3) daylight total vs nightly total wording. Use **simple z-score vs trailing 7-day same weekday mean** only once ≥**14** usable days exist; before that skip statistical language. Static absolute threshold optional env var for “heavy day” flair. | Deterministic summary text without fragile stats at low sample size; richer stats gated on data accumulation. |
+| **GIS → `camera_id` for Towson / I‑695** | Maintain **`scripts/export_mdot_cameras.py`**: ArcGIS REST `query` FeatureServer layer (Md SHA traffic cams layer — pin layer URL once discovered), optional `bbox`/highway filters, emit **`deploy/cameras.towson.yaml`** checked into repo (`camera_id`, `camera_location`, `m3u8_url` built from pattern). README: “refresh quarterly.” **Fallback:** manual YAML row for pilot cam IDs. | Single reproducible curator path; survives chat context loss; human can still hand-edit YAML. |
+| **Streamlit ↔ DB** | **Direct SQL** inside trusted Docker network via **`DATABASE_READONLY_URL`** (Postgres role `city_pulse_reader` — `SELECT` only). **Defer FastAPI read API** until public deploy, auth gate, or second client needs sharing the same contract. | Fastest MVP; DB not exposed publicly if firewall/compose binds localhost; upgrade path documented. |
+
+
+**Reconsider** (triggers revise SPEC+PLAN): public internet exposure for dashboard → add auth + REST/BFF layer; sustained multi-camera scale → split ingest tier; stakeholder wants class mix charts → widen schema deliberately.
 
 ---
 
 ## Appendix A — Functional requirements traceability
 
-| ID | Requirement | Priority |
-| --- | ----------- | -------- |
-| F1 | Ingest HLS from configurable URLs; **1 frame / 5–10 s** | must |
-| F2 | Serialize frames (e.g. base64) → **Redis** | must |
-| F3 | Worker → MLServer (OIP) via aiSSEMBLE client → **vehicle_count** | must |
-| F4 | Persist **time**, **camera_location**, **vehicle_count** | must |
-| F5 | Daily job → aggregates → Sumy MLServer → store brief | must |
-| F6 | Streamlit: charts + brief | must |
-| F7 | `inference deploy init` **Docker** target for MLServer | should |
-| F8 | Configurable cameras + stable **camera_location** labels | should |
+
+| ID  | Requirement                                                      | Priority |
+| --- | ---------------------------------------------------------------- | -------- |
+| F1  | Ingest HLS from configurable URLs; **1 frame / 5–10 s**          | must     |
+| F2  | Serialize frames (e.g. base64) → **Redis**                       | must     |
+| F3  | Worker → MLServer (OIP) via aiSSEMBLE client → **vehicle_count** | must     |
+| F4  | Persist **time**, **camera_location**, **vehicle_count**         | must     |
+| F5  | Daily job → aggregates → Sumy MLServer → store brief             | must     |
+| F6  | Streamlit: charts + brief                                        | must     |
+| F7  | `inference deploy init` **Docker** target for MLServer           | should   |
+| F8  | Configurable cameras + stable **camera_location** labels         | should   |
+
 
 ---
 
@@ -270,11 +282,13 @@ Specific, testable “done” for MVP (maps to Prior `F1–F8`):
 
 ### TimescaleDB (minimal)
 
-| Column | Type |
-| --- | --- |
-| `time` | `timestamptz` |
-| `camera_location` | `text` |
-| `vehicle_count` | `integer` |
+
+| Column            | Type          |
+| ----------------- | ------------- |
+| `time`            | `timestamptz` |
+| `camera_location` | `text`        |
+| `vehicle_count`   | `integer`     |
+
 
 ### Redis role
 
@@ -296,7 +310,7 @@ HLS URLs → Capture → Redis queue → MLServer (YOLO) → TimescaleDB
 
 ## Appendix D — Phased rollout (informal PLAN seed)
 
-_Use formal Plan doc or tasks file per spec-driven-development Phases 2–3._
+*Use formal Plan doc or tasks file per spec-driven-development Phases 2–3.*
 
 1. **Ingest + local sanity:** Fedora or Mac; one MDOT stream; MLServer smoke for YOLO on M1/VM.
 2. **Pipeline:** Redis + Timescale via Compose; YOLO container; ingestion → inference → inserts.
@@ -319,4 +333,5 @@ _(Human signs off before heavy implementation.)_
 - [ ] All six core areas present (Objective, Tech Stack, Commands, Project Structure, Code Style, Testing Strategy, Boundaries).
 - [ ] Success Criteria are specific and testable.
 - [ ] Boundaries (Always / Ask first / Never) defined.
-- [ ] Human reviewed assumptions + Open Questions.
+- [ ] Human reviewed assumptions + resolved-question recommendations (or overridden them explicitly).
+
