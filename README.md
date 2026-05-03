@@ -174,7 +174,7 @@ rtk bash -lc 'source .venv/bin/activate && set -a && source .env && set +a && py
 rtk bash -lc 'source .venv/bin/activate && streamlit run src/city_pulse/dashboard/app.py'
 ```
 
-With **`INGEST_M3U8_URL`** set (see `.env.example`), the dashboard shows an embedded **live HLS preview** (hls.js). Restart Streamlit after changing that URL. **`INGEST_CAMERA_KEY`** should match what you pass to ingest when labeling counts.
+With **`INGEST_M3U8_URL`** set (see `.env.example`), the dashboard shows an embedded **live HLS preview** (hls.js). Restart Streamlit after changing that URL. **`INGEST_CAMERA_KEY`** must match **ingest** and **vision worker** so new rows use that `camera_location`. The chart defaults to that camera, uses **5-minute Timescale buckets**, and **auto-refreshes** (see **`DASHBOARD_CHART_REFRESH_SECONDS`**) while live counts only appear if **`city-pulse-ingest`** and **`city-pulse-vision-worker`** are running against your DB.
 
 **Quick visual check (optional):** line chart shows two demo cameras; “Latest daily brief” shows the stored text (rendered as plain text for safety); Ops shows queue length and “Last ingest success” after a short ingest run (or “no key yet” if ingest never ran). Do not expose the dashboard to the public internet without hardening.
 

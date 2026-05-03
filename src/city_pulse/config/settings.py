@@ -140,6 +140,13 @@ class Settings(BaseSettings):
         description="Max psycopg pool connections for daily brief job",
     )
 
+    dashboard_chart_refresh_seconds: int = Field(
+        default=5,
+        ge=2,
+        le=120,
+        description="Streamlit chart fragment rerun interval (live pipeline)",
+    )
+
     @field_validator("ingest_heartbeat_key", mode="before")
     @classmethod
     def _none_if_blank(cls, v: object) -> str | None:

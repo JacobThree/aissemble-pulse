@@ -46,21 +46,22 @@ def list_cameras(conn: Connection) -> list[str]:
         return [str(r[0]) for r in cur.fetchall()]
 
 
-def fetch_hourly_series(
+def fetch_vehicle_series(
     conn: Connection,
     *,
     cameras: list[str],
     start: date,
     end_inclusive: date,
+    bucket_interval: str,
 ) -> pd.DataFrame:
-    """Hourly sums per camera; empty frame if ``cameras`` is empty."""
+    """Aggregate with Timescale ``time_bucket`` (e.g. ``5 minutes``, ``1 hour``)."""
     if not cameras:
         return pd.DataFrame(columns=["bucket", "camera_location", "total"])
     lo, hi = utc_window(start, end_inclusive)
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT date_trunc('hour', time) AS bucket,
+            SELECT time_bucket(%s::interval, time) AS bucket,
                    camera_location,
                    SUM(vehicle_count)::bigint AS total
             FROM vehicle_counts
@@ -70,7 +71,7 @@ def fetch_hourly_series(
             GROUP BY 1, 2
             ORDER BY 1, 2
             """,
-            (cameras, lo, hi),
+            (bucket_interval, cameras, lo, hi),
         )
         rows = cur.fetchall()
     if not rows:
@@ -79,6 +80,23 @@ def fetch_hourly_series(
     df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
     df["total"] = df["total"].astype(int)
     return df
+
+
+def fetch_hourly_series(
+    conn: Connection,
+    *,
+    cameras: list[str],
+    start: date,
+    end_inclusive: date,
+) -> pd.DataFrame:
+    """Hourly sums per camera (compat wrapper)."""
+    return fetch_vehicle_series(
+        conn,
+        cameras=cameras,
+        start=start,
+        end_inclusive=end_inclusive,
+        bucket_interval="1 hour",
+    )
 
 
 @dataclass(frozen=True)
