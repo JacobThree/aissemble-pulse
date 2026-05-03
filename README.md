@@ -172,7 +172,7 @@ rtk bash -lc 'source .venv/bin/activate && set -a && source .env && set +a && py
 rtk bash -lc 'source .venv/bin/activate && streamlit run src/city_pulse/dashboard/app.py'
 ```
 
-**Quick visual check (optional):** line chart shows two demo cameras; “Latest daily brief” shows seeded Markdown; Ops shows queue length and “Last ingest success” after a short ingest run (or “no key yet” if ingest never ran).
+**Quick visual check (optional):** line chart shows two demo cameras; “Latest daily brief” shows the stored text (rendered as plain text for safety); Ops shows queue length and “Last ingest success” after a short ingest run (or “no key yet” if ingest never ran). Do not expose the dashboard to the public internet without hardening.
 
 ## Vision worker (Redis → YOLO → Timescale)
 

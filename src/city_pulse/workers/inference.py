@@ -7,6 +7,16 @@ from typing import Any
 
 import httpx
 
+from city_pulse.oip import infer_url as infer_url_for
+
+__all__ = [
+    "count_vehicle_detections",
+    "infer_url_for",
+    "infer_vehicle_count",
+    "parse_infer_outputs",
+    "vehicle_label_allowlist",
+]
+
 
 def vehicle_label_allowlist(csv: str) -> set[str]:
     return {x.strip().lower() for x in csv.split(",") if x.strip()}
@@ -81,9 +91,3 @@ def infer_vehicle_count(
         "scores": scores,
         "latency_ms": latency_ms,
     }
-
-
-def infer_url_for(base: str, model_name: str) -> str:
-    """Build OIP v2 infer URL (HTTP)."""
-    root = base.rstrip("/")
-    return f"{root}/v2/models/{model_name}/infer"

@@ -44,7 +44,7 @@ def main() -> None:
 
     report = date.today() - timedelta(days=1)
     body = (
-        f"**Sample brief (seeded)** for {report}: morning peaks on {cams[0]}; "
+        f"Sample brief (seeded) for {report}: morning peaks on {cams[0]}; "
         f"afternoon activity on {cams[1]}. See hourly chart in the dashboard."
     )
 

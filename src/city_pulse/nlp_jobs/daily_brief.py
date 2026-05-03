@@ -16,6 +16,7 @@ from city_pulse.nlp_jobs.daily_aggregate import (
     aggregate_cameras,
     build_brief_draft,
 )
+from city_pulse.oip import infer_url
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,6 @@ def utc_day_bounds(day: date) -> tuple[datetime, datetime]:
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + timedelta(days=1)
     return start, end
-
-
-def sumy_infer_url(base: str, model_name: str) -> str:
-    root = base.rstrip("/")
-    return f"{root}/v2/models/{model_name}/infer"
 
 
 def parse_sumy_summary(body: dict[str, Any]) -> str:
@@ -76,7 +72,7 @@ def run_daily_brief_for_day(settings: Settings, *, report_day: date) -> str:
     )
     timeout = httpx.Timeout(settings.sumy_http_timeout_seconds)
     http_client = httpx.Client(timeout=timeout)
-    infer_url = sumy_infer_url(settings.sumy_endpoint, settings.sumy_model_name)
+    sumy_url = infer_url(settings.sumy_endpoint, settings.sumy_model_name)
     try:
         with pool.connection() as conn:
             hourly = fetch_hourly_vehicle_sums(conn, window_start=start, window_end=end)
@@ -95,7 +91,7 @@ def run_daily_brief_for_day(settings: Settings, *, report_day: date) -> str:
 
         draft = build_brief_draft(report_day, by_camera)
         try:
-            summary = summarize_with_sumy(http_client, infer_url=infer_url, text=draft)
+            summary = summarize_with_sumy(http_client, infer_url=sumy_url, text=draft)
         except httpx.HTTPError:
             logger.exception("sumy_infer_failed day=%s", report_day)
             summary = f"[Sumy unavailable] Fallback draft:\n\n{draft}"

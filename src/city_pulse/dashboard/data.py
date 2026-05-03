@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 
 import pandas as pd
 import psycopg
+import redis
 from psycopg import Connection
 
 
@@ -110,7 +110,7 @@ def fetch_latest_brief(conn: Connection) -> BriefRow | None:
 
 
 def read_ingest_heartbeat(
-    redis_client: Any,
+    redis_client: redis.Redis,
     *,
     key: str | None,
 ) -> str | None:

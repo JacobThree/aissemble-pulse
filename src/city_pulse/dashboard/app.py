@@ -107,7 +107,8 @@ def main() -> None:
         else:
             st.metric("Day (UTC)", str(brief.day))
             st.caption(f"Generated {brief.generated_at.isoformat()}")
-            st.markdown(brief.body)
+            # DB-stored brief: plain text avoids Markdown/HTML injection if misused.
+            st.text(brief.body)
 
     with st.expander("Ops"):
         st.text(f"Queue key: {settings.ingest_queue_key}")

@@ -9,6 +9,7 @@ from typing import cast
 import httpx
 import redis
 from psycopg_pool import ConnectionPool
+from pydantic import ValidationError
 
 from city_pulse.config.settings import Settings
 from city_pulse.db.pool import create_pool
@@ -47,7 +48,7 @@ def process_next(
     _, raw = cast(tuple[str, str], item)
     try:
         payload = FramePayload.model_validate_json(raw)
-    except Exception:
+    except ValidationError:
         logger.exception("invalid_frame_json")
         return True
 
