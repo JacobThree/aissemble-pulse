@@ -13,9 +13,12 @@ WORKDIR /app
 # Copy requirements file (release mode)
 COPY deploy/docker/requirements.txt .
 
-# Create virtual environment and install from PyPI
+# Create virtual environment and install from PyPI.
+# Ultralytics pulls opencv-python (GUI); slim images lack libxcb. Use headless cv2.
 RUN uv venv .venv && \
-    uv pip install --no-cache -r requirements.txt
+    uv pip install --no-cache -r requirements.txt && \
+    uv pip uninstall -y opencv-python && \
+    uv pip install --no-cache "opencv-python-headless>=4.8"
 
 # Runtime stage - minimal image
 FROM python:3.11-slim
@@ -28,8 +31,9 @@ COPY --from=builder /app/.venv /app/.venv
 # Add venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy models directory
-COPY models/ /app/models/
+# Only the YOLO model — do not copy models/sumy/ here. MLServer loads every
+# subfolder under /app/models; sumy needs aissemble-inference-sumy (separate image).
+COPY models/yolov8/ /app/models/yolov8/
 
 # Create MLServer settings to bind to all interfaces (required for Docker)
 # parallel_workers=0 disables multiprocessing to avoid uvloop issues

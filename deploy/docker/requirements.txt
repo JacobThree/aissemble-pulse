@@ -1,2 +1,4 @@
 aissemble-inference-yolo
 mlserver>=1.6.0
+# aissemble YOLO runtime imports ultralytics at load time; not always pulled transitively.
+ultralytics>=8.0

@@ -32,7 +32,7 @@ rtk bash -lc 'bash scripts/verify_local.sh'
 
 ## One terminal: ingest + vision + Streamlit
 
-With **Redis, TimescaleDB, and YOLO** already running in Docker, `.env` configured (`INGEST_M3U8_URL`, `INGEST_CAMERA_KEY`, DB URLs), and `pip install -e ".[dev]"` done, start the **full capture → infer → UI** stack in one shell:
+With `.env` configured (`DATABASE_URL` on **localhost:5433**, `INGEST_M3U8_URL` preferably **`…/playlist.m3u8`**, `INGEST_CAMERA_KEY`, Redis URL), and `pip install -e ".[dev]"` done, start the **full capture → infer → UI** stack in one shell:
 
 ```bash
 rtk bash scripts/run_local_stack.sh
@@ -44,13 +44,21 @@ Same thing via the installed console script (from repo root or elsewhere):
 rtk city-pulse-stack
 ```
 
-This runs **`city-pulse-ingest`** and **`city-pulse-vision-worker`** in the background and **Streamlit** in the foreground (open the printed URL, usually `http://localhost:8501`). **Ctrl+C** stops all three.
+The script **starts** `redis`, `timescaledb`, and `yolo` in Compose (unless you opt out), runs a **preflight** (Redis ping, Postgres `SELECT 1`, waits for YOLO `/v2/health/ready`), then runs **`city-pulse-ingest`** and **`city-pulse-vision-worker`** in the background (logs: **`logs/ingest.log`**, **`logs/vision.log`**) and **Streamlit** in the foreground (usually `http://localhost:8501`). **Ctrl+C** stops all three.
 
-Optional: bring Compose services up in the same command (first time or after `docker compose down`):
+If Compose is already up and you want to skip `docker compose up`:
 
 ```bash
-RUN_STACK_INFRA=1 rtk bash scripts/run_local_stack.sh
+SKIP_STACK_INFRA=1 rtk bash scripts/run_local_stack.sh
 ```
+
+Check infra only (no workers):
+
+```bash
+rtk bash -lc 'source .venv/bin/activate && set -a && source .env && set +a && python scripts/preflight_stack.py'
+```
+
+**Chart not moving?** Confirm `yolo` is in `docker compose ps` and healthy. Tail `logs/vision.log` — if YOLO was down, frames are dropped and nothing hits `vehicle_counts`. If YOLO logs show `ModuleNotFoundError: aissemble_inference_sumy`, rebuild the **yolo** image (it must only bundle `models/yolov8/`, not **sumy**). Seed data uses **demo** camera names; live ingest uses **`INGEST_CAMERA_KEY`** — the dashboard filters on that name, so mismatch looks “stuck.”
 
 ## Legal & feeds
 

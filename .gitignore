@@ -41,6 +41,9 @@ pip-wheel-metadata/
 # Tooling / OS dot-cache
 .cache/
 
+# Local stack logs (run_local_stack.sh)
+logs/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -11,7 +11,7 @@ This directory contains Docker configuration for containerized deployment.
 
 ## Models
 
-- yolov8
+- **yolov8** only — the image copies `models/yolov8/` into `/app/models/yolov8/`. If you also copy `models/sumy/` into this image, MLServer tries to load Sumy and exits with `ModuleNotFoundError: aissemble_inference_sumy` (Sumy has its own Docker image on host port 8090).
 
 ## Runtime Dependencies
 
@@ -19,6 +19,9 @@ The following packages are installed from PyPI:
 
 - aissemble-inference-yolo
 - mlserver>=1.6.0
+- ultralytics (required by the YOLO runtime inside the container)
+
+The Dockerfile installs **`opencv-python-headless`** after deps resolve (replacing **`opencv-python`**) so **`cv2`** works on slim images without GUI libs like **`libxcb`**.
 
 ## Quick Start
 
@@ -28,7 +31,7 @@ Build and start the container:
 docker-compose up --build
 ```
 
-The server will be available at http://localhost:8080
+The server will be available at [http://localhost:8080](http://localhost:8080)
 
 ## Usage
 
@@ -110,13 +113,17 @@ For production deployments:
 ## Troubleshooting
 
 **Build fails with package not found:**
+
 - Ensure runtime packages are published to PyPI
 - Check network connectivity to PyPI
 
 **Container exits immediately:**
+
 - Check logs: `docker-compose logs`
 - Verify model-settings.json files are valid JSON
 
 **Port already in use:**
+
 - Stop other services on port 8080/8081
 - Or change the ports in docker-compose.yml
+
