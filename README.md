@@ -98,6 +98,25 @@ rtk bash -lc 'source .venv/bin/activate && city-pulse-daily-brief'
 rtk bash -lc 'source .venv/bin/activate && city-pulse-daily-brief --day 2026-05-01'
 ```
 
+## Dashboard (Streamlit)
+
+Read-only **Timescale** via **`DATABASE_READONLY_URL`** (role `city_pulse_reader`) plus **Redis** for queue depth + last ingest time (see **`INGEST_HEARTBEAT_KEY`**, set by **`city-pulse-ingest`** after each successful enqueue).
+
+**Seed sample series + one brief** (requires DB up, write user `city_pulse`):
+
+```bash
+rtk docker compose up -d timescaledb redis
+rtk bash -lc 'source .venv/bin/activate && export DATABASE_URL=postgresql://city_pulse:city_pulse@localhost:5433/city_pulse && python scripts/seed_dashboard_sample.py'
+```
+
+**Run the UI**
+
+```bash
+rtk bash -lc 'source .venv/bin/activate && streamlit run src/city_pulse/dashboard/app.py'
+```
+
+**Quick visual check (optional):** line chart shows two demo cameras; “Latest daily brief” shows seeded Markdown; Ops shows queue length and “Last ingest success” after a short ingest run (or “no key yet” if ingest never ran).
+
 ## Vision worker (Redis → YOLO → Timescale)
 
 Consumes **`INGEST_QUEUE_KEY`** with [`FramePayload`](src/city_pulse/ingest/models.py) JSON (`camera_key`, `captured_at`, `frame_b64`), POSTs the frame to MLServer OIP infer, counts allowed labels above **`VISION_MIN_CONFIDENCE`**, and inserts into **`vehicle_counts`**. Needs Redis, TimescaleDB, and the **`yolo`** service (or any compatible OIP endpoint).

@@ -64,3 +64,19 @@ def test_push_invalid_max_length() -> None:
             max_length=0,
             metrics=IngestMetrics(),
         )
+
+
+def test_push_sets_heartbeat(redis_client: fakeredis.FakeRedis) -> None:
+    key = "city_pulse:ingest:last_success_at"
+    push_frame(
+        redis_client,
+        queue_key="qhb",
+        payload=_payload(),
+        max_length=10,
+        metrics=IngestMetrics(),
+        heartbeat_key=key,
+    )
+    ts = redis_client.get(key)
+    assert ts is not None
+    assert isinstance(ts, str)
+    assert "T" in ts or ts.endswith("Z")

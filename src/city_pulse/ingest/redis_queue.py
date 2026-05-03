@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import cast
 
 from redis import Redis
@@ -18,6 +19,7 @@ def push_frame(
     payload: FramePayload,
     max_length: int,
     metrics: IngestMetrics,
+    heartbeat_key: str | None = None,
 ) -> None:
     """LPUSH JSON + LTRIM so list keeps at most ``max_length`` newest items.
 
@@ -41,3 +43,8 @@ def push_frame(
         raise
 
     metrics.frames_enqueued += 1
+    if heartbeat_key:
+        client.set(
+            heartbeat_key,
+            datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )

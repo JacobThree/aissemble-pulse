@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql://city_pulse:city_pulse@localhost:5433/city_pulse",
         description="Timescale URL (Compose DB mapped to localhost:5433)",
+    )
+    database_readonly_url: str = Field(
+        default=(
+            "postgresql://city_pulse_reader:city_pulse_reader@localhost:5433/city_pulse"
+        ),
+        description="Read-only role for Streamlit / dashboards",
     )
     redis_url: str = Field(
         default="redis://localhost:6379/0",
@@ -46,6 +52,13 @@ class Settings(BaseSettings):
     ingest_queue_key: str = Field(
         default="city_pulse:frames",
         description="Redis list key for frame JSON payloads",
+    )
+    ingest_heartbeat_key: str | None = Field(
+        default="city_pulse:ingest:last_success_at",
+        description=(
+            "Redis string key set to ISO timestamp after each successful enqueue; "
+            "empty/null disables"
+        ),
     )
     ingest_max_queue_length: int = Field(
         default=64,
@@ -126,6 +139,13 @@ class Settings(BaseSettings):
         le=16,
         description="Max psycopg pool connections for daily brief job",
     )
+
+    @field_validator("ingest_heartbeat_key", mode="before")
+    @classmethod
+    def _none_if_blank(cls, v: object) -> str | None:
+        if v is None or v == "":
+            return None
+        return str(v)
 
 
 @lru_cache(maxsize=1)

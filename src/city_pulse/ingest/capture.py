@@ -107,6 +107,7 @@ def run_ingest_loop(
                     payload=payload,
                     max_length=settings.ingest_max_queue_length,
                     metrics=metrics,
+                    heartbeat_key=settings.ingest_heartbeat_key,
                 )
                 enqueued = True
             except RedisError as exc:
