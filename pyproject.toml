@@ -23,6 +23,7 @@ dependencies = [
 city-pulse-ingest = "city_pulse.ingest.cli:main"
 city-pulse-vision-worker = "city_pulse.workers.cli:main"
 city-pulse-daily-brief = "city_pulse.nlp_jobs.cli:main"
+city-pulse-stack = "city_pulse.stack_cli:main"
 
 [project.optional-dependencies]
 dev = [

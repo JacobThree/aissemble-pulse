@@ -30,6 +30,28 @@ Commands assume repo root and the `**rtk**` prefix on runnable shells (`[.cursor
 rtk bash -lc 'bash scripts/verify_local.sh'
 ```
 
+## One terminal: ingest + vision + Streamlit
+
+With **Redis, TimescaleDB, and YOLO** already running in Docker, `.env` configured (`INGEST_M3U8_URL`, `INGEST_CAMERA_KEY`, DB URLs), and `pip install -e ".[dev]"` done, start the **full capture → infer → UI** stack in one shell:
+
+```bash
+rtk bash scripts/run_local_stack.sh
+```
+
+Same thing via the installed console script (from repo root or elsewhere):
+
+```bash
+rtk city-pulse-stack
+```
+
+This runs **`city-pulse-ingest`** and **`city-pulse-vision-worker`** in the background and **Streamlit** in the foreground (open the printed URL, usually `http://localhost:8501`). **Ctrl+C** stops all three.
+
+Optional: bring Compose services up in the same command (first time or after `docker compose down`):
+
+```bash
+RUN_STACK_INFRA=1 rtk bash scripts/run_local_stack.sh
+```
+
 ## Legal & feeds
 
 Use **only public, operator-published streams** you are allowed to observe (Maryland SHA traffic cameras are intended as public situational awareness). Do **not** point this pipeline at private, authenticated, or unclear-license feeds. See SPEC **Success Criteria §7** and **Boundaries → Never do**.
