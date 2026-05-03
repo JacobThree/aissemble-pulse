@@ -310,7 +310,7 @@ HLS URLs → Capture → Redis queue → MLServer (YOLO) → TimescaleDB
 
 ## Appendix D — Phased rollout (informal PLAN seed)
 
-*Use formal Plan doc or tasks file per spec-driven-development Phases 2–3.*
+_Use formal Plan doc or tasks file per spec-driven-development Phases 2–3._
 
 1. **Ingest + local sanity:** Fedora or Mac; one MDOT stream; MLServer smoke for YOLO on M1/VM.
 2. **Pipeline:** Redis + Timescale via Compose; YOLO container; ingestion → inference → inserts.
