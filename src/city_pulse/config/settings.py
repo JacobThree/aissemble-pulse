@@ -26,8 +26,8 @@ class Settings(BaseSettings):
         description="Redis for frame queue",
     )
     yolo_endpoint: str = Field(
-        default="http://localhost:8081",
-        description="MLServer / OIP base URL for YOLO inference",
+        default="http://localhost:8080",
+        description="MLServer HTTP base (OIP REST; gRPC often 8081 in Compose)",
     )
 
     ingest_m3u8_url: str | None = Field(

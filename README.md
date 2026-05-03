@@ -58,3 +58,26 @@ Queue depth:
 ```bash
 rtk bash -lc 'docker compose exec redis redis-cli LLEN city_pulse:frames'
 ```
+
+## YOLO (MLServer)
+
+Dockerfile + MLServer layout come from **aissemble-inference-deploy** (`inference deploy init --target docker`). Model definition: `models/yolov8/model-settings.json` (downloads **`yolov8n.pt`** on first run inside the image).
+
+```bash
+rtk docker compose up -d yolo
+rtk bash -lc 'curl -sf http://127.0.0.1:8080/v2/health/ready && echo OK'
+```
+
+Regenerate `deploy/docker/` after editing model configs (requires `.venv` + **`pip install -e ".[aissemble]"`**):
+
+```bash
+rtk bash -lc 'source .venv/bin/activate && inference deploy init --target docker --model-dir models --output-dir deploy'
+```
+
+More checks: [`docs/mlserver-smoke.md`](docs/mlserver-smoke.md). **`YOLO_ENDPOINT`** defaults to `http://localhost:8080` (REST/OIP).
+
+Integration smoke (skipped if MLServer down):
+
+```bash
+rtk bash -lc 'source .venv/bin/activate && pytest tests/integration/test_mlserver_ready.py -q -m integration'
+```
