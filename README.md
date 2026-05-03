@@ -2,6 +2,62 @@
 
 Public-camera ingest → YOLO → Timescale → daily briefs. See [`SPEC.md`](SPEC.md) and [`PLAN.md`](PLAN.md).
 
+## Clone → dashboard (reproducible path)
+
+Commands assume repo root and the **`rtk`** prefix on runnable shells ([`.cursor/rules/stack-runtime.md`](.cursor/rules/stack-runtime.md)).
+
+1. **Clone** this repository and enter the project directory (`cd` …).
+2. **Python env**
+   ```bash
+   rtk python3.12 -m venv .venv
+   rtk bash -lc 'source .venv/bin/activate && pip install -e ".[dev]"'
+   ```
+3. **Environment** — copy [`.env.example`](.env.example) → `.env` (defaults match Compose on **localhost:5433**).
+4. **Infra** — Redis + TimescaleDB (required for DB-backed UI):
+   ```bash
+   rtk docker compose up -d redis timescaledb
+   ```
+5. **Sample data + Streamlit** — seeds hourly counts + one brief (loads `.env` so **`DATABASE_URL`** is set for write user `city_pulse`):
+   ```bash
+   rtk bash -lc 'source .venv/bin/activate && set -a && source .env && set +a && python scripts/seed_dashboard_sample.py'
+   rtk bash -lc 'source .venv/bin/activate && set -a && source .env && set +a && streamlit run src/city_pulse/dashboard/app.py'
+   ```
+6. **Optional full ML pipeline** — bring up YOLO + Sumy, run ingest (real public `.m3u8`), vision worker, daily brief — see sections below.
+
+**Automated checks (after `pip install -e ".[dev]"`):**
+
+```bash
+rtk bash -lc 'bash scripts/verify_local.sh'
+```
+
+## Legal & feeds
+
+Use **only public, operator-published streams** you are allowed to observe (Maryland SHA traffic cameras are intended as public situational awareness). Do **not** point this pipeline at private, authenticated, or unclear-license feeds. See SPEC **Success Criteria §7** and **Boundaries → Never do**.
+
+## Camera IDs (`camera_id`) & GIS
+
+MDOT CHART HLS URLs follow:
+
+`https://strmr5.sha.maryland.gov/rtplive/{camera_id}/playlist.m3u8`
+
+Resolve **`camera_id`** from Maryland’s open ArcGIS traffic-camera catalog (Towson / I‑695 corridor filters). Validate IDs against that catalog when adding cameras; **SPEC §Resolved questions** describes a planned **`scripts/export_mdot_cameras.py`** → YAML workflow — until that lands, hand-pick IDs from the catalog and set **`INGEST_CAMERA_KEY`** / **`INGEST_M3U8_URL`** accordingly.
+
+## SPEC success criteria (MVP trace)
+
+| # | Criterion | Where in this README |
+| --- | --- | --- |
+| 1 | Ingest MDOT `.m3u8`, bounded Redis queue | **Ingest (HLS → Redis)**, `INGEST_MAX_QUEUE_LENGTH` in [`.env.example`](.env.example) |
+| 2 | Frames in Redis; ingest ≠ inference | **Vision worker (Redis → YOLO → Timescale)** |
+| 3 | `vehicle_counts` rows | Vision worker; **Infra** for Timescale |
+| 4 | Daily brief in DB | **Daily brief job**; optional seed in **Clone → dashboard** |
+| 5 | Streamlit chart + brief | **Dashboard (Streamlit)** |
+| 6 | Compose + MLServer | **Infra**, **YOLO (MLServer)**, **Sumy (MLServer)** |
+| 7 | Public-feed stance + `camera_id` | **Legal & feeds**, **Camera IDs (GIS)** |
+
+## Multi-arch Docker builds
+
+If you build images on **Apple Silicon** and deploy to **amd64** (typical Linux VPS), set e.g. `DOCKER_DEFAULT_PLATFORM=linux/amd64` or use **`docker buildx`** when building/pushing — see [Docker multi-platform](https://docs.docker.com/build/building/multi-platform/).
+
 ## Dev
 
 Requires **Python 3.11+** (repo tested with 3.12; macOS `python3` may be older — use `python3.12 -m venv .venv`).
@@ -11,6 +67,7 @@ rtk python3.12 -m venv .venv
 rtk bash -lc 'source .venv/bin/activate && pip install -e ".[dev]"'
 rtk bash -lc 'source .venv/bin/activate && pytest tests/ -q'
 rtk bash -lc 'source .venv/bin/activate && ruff check src tests && ruff format --check src tests'
+rtk bash -lc 'bash scripts/verify_local.sh'
 ```
 
 Shell commands use the **`rtk`** prefix per [`.cursor/rules/stack-runtime.md`](.cursor/rules/stack-runtime.md).
@@ -106,7 +163,7 @@ Read-only **Timescale** via **`DATABASE_READONLY_URL`** (role `city_pulse_reader
 
 ```bash
 rtk docker compose up -d timescaledb redis
-rtk bash -lc 'source .venv/bin/activate && export DATABASE_URL=postgresql://city_pulse:city_pulse@localhost:5433/city_pulse && python scripts/seed_dashboard_sample.py'
+rtk bash -lc 'source .venv/bin/activate && set -a && source .env && set +a && python scripts/seed_dashboard_sample.py'
 ```
 
 **Run the UI**

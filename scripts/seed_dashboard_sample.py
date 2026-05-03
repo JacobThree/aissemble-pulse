@@ -4,7 +4,7 @@
 Requires write access: **DATABASE_URL** (default user `city_pulse`, not the read-only role).
 
 ```bash
-rtk bash -lc 'source .venv/bin/activate && export DATABASE_URL=postgresql://city_pulse:city_pulse@localhost:5433/city_pulse && python scripts/seed_dashboard_sample.py'
+rtk bash -lc 'source .venv/bin/activate && set -a && source .env && set +a && python scripts/seed_dashboard_sample.py'
 ```
 """
 
